@@ -52,8 +52,14 @@ export function collectPoints(
 // Builds a static convex-hull collider description from a mesh in world space.
 // Hulls are solid, so thin props can't sink through them like they can with
 // triangle meshes; concave furniture is split into several `-col` meshes.
-export function hullFromMesh(mesh: THREE.Mesh): InstanceType<typeof RAPIER.ColliderDesc> | null {
-  return RAPIER.ColliderDesc.convexHull(collectPoints(mesh, new THREE.Matrix4()));
+// `adjust` may move the points (world space, Y up) before the hull is built.
+export function hullFromMesh(
+  mesh: THREE.Mesh,
+  adjust?: (points: Float32Array) => void,
+): InstanceType<typeof RAPIER.ColliderDesc> | null {
+  const points = collectPoints(mesh, new THREE.Matrix4());
+  adjust?.(points);
+  return RAPIER.ColliderDesc.convexHull(points);
 }
 
 type ColliderDesc = InstanceType<typeof RAPIER.ColliderDesc>;

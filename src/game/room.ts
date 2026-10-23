@@ -62,8 +62,10 @@ export function parseRoom(root: THREE.Object3D, world: InstanceType<typeof RAPIE
   for (const obj of originals) obj.removeFromParent();
 
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  const floor = colliders.find((m) => m.name === 'floor-col');
+  const floorY = floor ? new THREE.Box3().setFromObject(floor).max.y : null;
   for (const mesh of colliders) {
-    const desc = hullFromMesh(mesh);
+    const desc = hullFromMesh(mesh, floorY === null ? undefined : (p) => deepenFloor(p, floorY, mesh === floor));
     if (desc) world.createCollider(desc.setFriction(0.8), body);
     else console.warn(`Collider mesh "${mesh.name}" has no volume`);
     mesh.visible = false;
@@ -82,6 +84,25 @@ export function parseRoom(root: THREE.Object3D, world: InstanceType<typeof RAPIE
   });
 
   return { props, spawn };
+}
+
+// Collider bottoms this close to the floor (m) count as standing on it.
+const FLOOR_SNAP = 0.01;
+// How far below the floor's top the floor collider reaches, and how far
+// down into it the colliders standing on it are extended (m).
+const FLOOR_DEPTH = 1;
+const STANDING_SINK = 0.5;
+
+// Keeps fast props from leaving through the floor. A solid hull pushes a
+// prop out through its nearest face, so a thin floor slab lets a fast
+// spinning prop that gets past its middle out the bottom. And a collider
+// left flush on the floor pushes props sunk into the floor beside it further
+// down with its bottom face.
+function deepenFloor(points: Float32Array, floorY: number, isFloor: boolean): void {
+  for (let i = 1; i < points.length; i += 3) {
+    if (isFloor && points[i] < floorY - FLOOR_SNAP) points[i] = floorY - FLOOR_DEPTH;
+    else if (!isFloor && Math.abs(points[i] - floorY) < FLOOR_SNAP) points[i] = floorY - STANDING_SINK;
+  }
 }
 
 function makePropDef(obj: THREE.Object3D): PropDef {

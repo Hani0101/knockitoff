@@ -25,6 +25,8 @@ interface Debris {
 const EVENTS = RAPIER.ActiveEvents.COLLISION_EVENTS;
 // Props slower than this (m/s) count as resting, e.g. for the cat to look at.
 const RESTING_SPEED = 0.5;
+// Anything below this height (m) has fallen out of the room.
+const FELL_OUT_Y = -2;
 
 export class PropSystem {
   props: Prop[] = [];
@@ -55,6 +57,7 @@ export class PropSystem {
   // before stepping, so `lastVel` holds pre-impact velocity.
   sync(): void {
     for (const p of this.props) {
+      if (p.body.translation().y < FELL_OUT_Y) this.putBack(p);
       const t = p.body.translation();
       const r = p.body.rotation();
       p.object.position.set(t.x, t.y, t.z);
@@ -62,6 +65,12 @@ export class PropSystem {
       const v = p.body.linvel();
       p.lastVel.set(v.x, v.y, v.z);
     }
+    // Debris that fell out of the room is just dropped.
+    this.debris = this.debris.filter((d) => {
+      const fell = d.body.translation().y < FELL_OUT_Y;
+      if (fell) this.removeDebris(d);
+      return !fell;
+    });
     for (const d of this.debris) {
       if (d.body.isSleeping()) continue;
       const t = d.body.translation();
@@ -188,6 +197,15 @@ export class PropSystem {
       this.byCollider.set(this.world.createCollider(desc, body).handle, prop);
     }
     this.props.push(prop);
+  }
+
+  // Returns a prop that fell out of the room to where it started.
+  private putBack(p: Prop): void {
+    const { position: pos, quaternion: q } = p.def.template;
+    p.body.setTranslation({ x: pos.x, y: pos.y, z: pos.z }, true);
+    p.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+    p.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    p.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 
   private removeProp(p: Prop): void {

@@ -11,8 +11,10 @@ import { initPhysics, RAPIER } from './physics';
 import { PropSystem } from './props';
 import { buildGreyboxRoom, parseRoom } from './room';
 
-const STEP = 1 / 60;
-const MAX_STEPS = 5;
+// 120 Hz: at 60 Hz a fast-spinning thin prop (a remote, a phone) can drive
+// deep enough into the floor in one step that the solver loses it.
+const STEP = 1 / 120;
+const MAX_STEPS = 10;
 
 export type Mode = 'title' | 'playing' | 'paused';
 
