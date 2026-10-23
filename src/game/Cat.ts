@@ -98,10 +98,7 @@ export class Cat {
     else if (this.state === 'trick') this.handleTrickInput(input, cam);
 
     if (this.state === 'holding' || this.state === 'trick') this.targetYaw = cam.yaw;
-    this.cam = cam;
   }
-
-  private cam: CameraRig | null = null;
 
   // Advances the cat by one fixed physics step.
   step(dt: number): void {
@@ -297,8 +294,6 @@ export class Cat {
     if (this.state !== 'free' || this.cooldown[paw] > 0) return;
     this.cooldown[paw] = tuning.swipeCooldown;
     this.swipes.push({ paw, t: 0, hit: false });
-    // Face the aim instantly so the paw lands where the player is looking.
-    if (this.cam) this.yaw = this.targetYaw = this.cam.yaw;
     this.playOneShot(paw === 'L' ? 'swipe_L' : 'swipe_R', 0.3);
     this.audio.swipe();
   }
@@ -323,10 +318,10 @@ export class Cat {
       .addScaledVector(facing, 0.3)
       .addScaledVector(right, side * 0.08);
 
-    const aim = this.cam ? this.cam.forwardFlat() : facing.clone();
+    // The paw strikes along the cat's facing, not the camera.
     // Left paw kicks things a little to the right, and vice versa.
-    const dir = aim
-      .multiplyScalar(1)
+    const dir = facing
+      .clone()
       .addScaledVector(right, -side * tuning.swipeSideKick)
       .addScaledVector(UP, tuning.swipeLift)
       .normalize();
