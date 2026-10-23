@@ -3,3 +3,6 @@ dist/
 *.log
 .DS_Store
 *.blend1
+.claude/launch.json
+blender/bake/*_raw.exr
+blender/bake/_status.txt
