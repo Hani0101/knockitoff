@@ -767,7 +767,8 @@ def define_props():
         add_box(bm, (0.15, 0.018, 0.19), (0, 0, 0.095), bevel=0.003)
         add_box(bm, (0.12, 0.002, 0.08), (0, 0.009, 0.11), mat=1)
         add_box(bm, (0.12, 0.002, 0.07), (0, 0.009, 0.045), mat=2)
-        add_box(bm, (0.03, 0.004, 0.12), (0, -0.04, 0.06), rot=Euler((0.4, 0, 0)))
+        # Stand: leans its top on the frame's back with its foot on the surface.
+        add_box(bm, (0.03, 0.004, 0.12), (0, -0.035, 0.056), rot=Euler((-0.4, 0, 0)))
         return [P["wood"], P["photo_sky"], P["photo_land"]]
     prop("picture_frame", (-1.55, -2.85, 0.5), 0.3, picture, grab=True, fragile=True, pieces=5)
 
@@ -819,7 +820,9 @@ def define_props():
                     rot=Euler((0, sx * 0.3, 0)))
         add_arc_tube(bm, 0.025, 0.005, -math.pi / 2, math.pi * 0.6, center=(0.0, -0.025, 0.03), plane="YZ",
                      steps=8, sides=6)
-        return [P["yellow"]]
+        # Flat plinth: the round body alone rocks and tips over in the game.
+        add_cyl(bm, 0.034, 0.008, segs=20, mat=1, bevel=0.002)
+        return [P["yellow"], P["wood"]]
     prop("figurine", (-3.82, -1.88, 1.03), 0.2, figurine, rot=math.pi / 2, grab=True, fragile=True, pieces=5)
 
     # --- East counter (top 0.9)
@@ -939,6 +942,21 @@ def build_props(P):
         if fragile:
             stats["fragile"] += 1
             stats["pieces"] += add_pieces(obj, pieces, seed=1000 + i, coll=PROPC, coll_tmp=TMP)
+    return stats
+
+
+def rebuild_props():
+    """Rebuilds only the props and their pieces, leaving the baked room as it is."""
+    global PROPC, TMP
+    for n in ("props", "_frac_tmp"):
+        c = bpy.data.collections.get(n)
+        if c:
+            clear_coll(c)
+    PROPC = get_coll("props")
+    TMP = get_coll("_frac_tmp")
+    define_props()
+    stats = build_props(prop_materials())
+    bpy.data.collections.remove(TMP)
     return stats
 
 
