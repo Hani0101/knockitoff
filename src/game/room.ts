@@ -73,7 +73,9 @@ export function parseRoom(root: THREE.Object3D, world: InstanceType<typeof RAPIE
 
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
-    if (mesh.isMesh && mesh.visible && !truthy(mesh.userData.baked)) {
+    // Baked meshes (and their shadow overlays) already have their shadows
+    // painted in; only real-time objects cast shadows.
+    if (mesh.isMesh && mesh.visible && !truthy(mesh.userData.baked) && !mesh.userData.shadowCatcher) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
     }
@@ -122,6 +124,7 @@ function applyBakedLook(mesh: THREE.Mesh): void {
   mesh.material = new THREE.MeshBasicMaterial({ map: src.map ?? null, color: src.color });
   const catcher = new THREE.Mesh(mesh.geometry, new THREE.ShadowMaterial({ opacity: 0.35 }));
   catcher.receiveShadow = true;
+  catcher.userData.shadowCatcher = true;
   catcher.name = `${mesh.name}-shadow`;
   mesh.add(catcher);
 }

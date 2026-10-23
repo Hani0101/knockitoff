@@ -4,9 +4,9 @@ export const assets = {
   // Rigged cat from assets-src/cat.glb (npm run compress). Set to null to
   // fall back to the grey-box placeholder cat.
   cat: 'models/cat.glb' as string | null,
-  // Set to 'models/room.glb' once the Blender room exists.
-  // While null, a grey-box room is built in code.
-  room: null as string | null,
+  // Blender room from assets-src/room.glb (npm run compress). Set to null
+  // to fall back to the grey-box room built in code.
+  room: 'models/room.glb' as string | null,
   // Optional sound files (in public/sounds). Missing ones fall back to synthesized sounds.
   sounds: {
     music: null as string | null,
