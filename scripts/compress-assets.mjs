@@ -5,7 +5,7 @@
 //
 // Geometry is compressed with meshopt. Textures are compressed to KTX2 when
 // the `toktx` tool (KTX-Software) is on PATH, otherwise to WebP.
-// Scene structure is left untouched (no flatten/join/simplify) because the
+// Scene structure is left untouched (no flatten/join/simplify/prune) because the
 // game reads object names and custom properties.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
@@ -78,6 +78,8 @@ for (const file of files) {
       '--instance', 'false',
       '--simplify', 'false',
       '--palette', 'false',
+      // Pruning drops empty leaf nodes, which removes markers like `spawn`.
+      '--prune', 'false',
     ],
     { stdio: 'inherit', shell: true },
   );
