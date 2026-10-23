@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { tuning } from '../config';
 import type { GameAudio } from './audio';
-import { collectPoints, RAPIER, unscaledWorldMatrix } from './physics';
+import { collectPoints, propColliders, RAPIER, unscaledWorldMatrix } from './physics';
 import type { PropDef } from './room';
 
 type World = InstanceType<typeof RAPIER.World>;
@@ -173,12 +173,6 @@ export class PropSystem {
       points = collectPoints(object, unscaledWorldMatrix(object));
       this.hullCache.set(def, points);
     }
-    const desc = (RAPIER.ColliderDesc.convexHull(points) ?? RAPIER.ColliderDesc.ball(0.05))
-      .setMass(def.mass)
-      .setFriction(0.6)
-      .setRestitution(0.3)
-      .setActiveEvents(EVENTS);
-
     const q = object.quaternion;
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -188,10 +182,12 @@ export class PropSystem {
         .setAngularDamping(0.3)
         .setCcdEnabled(true),
     );
-    const collider = this.world.createCollider(desc, body);
     const prop: Prop = { def, object, body, held: false, broken: false, lastVel: new THREE.Vector3() };
+    for (const { desc, share } of propColliders(points)) {
+      desc.setMass(def.mass * share).setFriction(0.6).setRestitution(0.3).setActiveEvents(EVENTS);
+      this.byCollider.set(this.world.createCollider(desc, body).handle, prop);
+    }
     this.props.push(prop);
-    this.byCollider.set(collider.handle, prop);
   }
 
   private removeProp(p: Prop): void {
