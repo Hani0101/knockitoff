@@ -25,6 +25,12 @@ export const catModel = {
   // bends instead of the head twisting on its own.
   neckBones: ['DEF-spine.004', 'DEF-spine.005'],
   tailBones: ['DEF-tail.001', 'DEF-tail.002', 'DEF-tail.003', 'DEF-tail.004'],
+  // Ground speed (m/s) the walk and run clips are animated for: how far a
+  // planted paw slides back over its time on the ground (cat_anims.py:
+  // 2 × reach / (duty × cycle length)). The clips speed up or slow down to
+  // match how fast she actually moves, so her paws don't skate.
+  walkClipSpeed: 0.81,
+  runClipSpeed: 2.57,
 };
 
 export const tuning = {
@@ -33,14 +39,43 @@ export const tuning = {
   // Cat body
   catRadius: 0.15,
   catHalfHeight: 0.04,
-  walkSpeed: 1.6,
+  // Cats walk at up to about 1 m/s; faster than that they'd trot. Shift runs.
+  walkSpeed: 0.9,
   runSpeed: 3.4,
   turnSpeed: 12,
   // Fixed jump: feet rise this high above the takeoff surface.
   jumpHeight: 0.8,
+  // Crouch before leaving the ground, so the jump reads as a pounce.
+  jumpWindup: 0.1,
+  // Leaping onto things: jumping with a surface ahead that she can reach
+  // (its near edge within `leapRange`, its top at least `leapMinRise` above
+  // her feet), she crouches with her eyes on it for `leapWindup` seconds,
+  // then leaps on an arc that peaks `leapClearance` above it and lands her
+  // on top. Too high to clear, the arc meets the edge and she scrambles up.
+  leapWindup: 0.45,
+  leapRange: 1.2,
+  leapMinRise: 0.2,
+  leapClearance: 0.2,
+  // Getting down: walking (not running) into a drop of `edgeDrop` to
+  // `descendMaxDrop` with a clear spot below, or jumping with the edge
+  // within `descendReach`, she creeps to the brink and reaches down for
+  // `descendWindup` seconds, then hops down onto it with a hop of
+  // `descendHop`.
+  descendWindup: 0.35,
+  descendMaxDrop: 2,
+  descendReach: 0.35,
+  descendHop: 0.08,
   // Ledge scramble: how far above the feet a ledge can be grabbed mid-air.
   scrambleReach: 0.55,
   scrambleDuration: 0.5,
+
+  // Exploring: standing or walking slowly at an edge with a drop of at
+  // least `edgeDrop` below it, she peers over. After reaching a surface at
+  // least `newSurfaceStep` higher or lower, she glances at her footing for
+  // `footingGlance` seconds.
+  edgeDrop: 0.3,
+  newSurfaceStep: 0.2,
+  footingGlance: 0.8,
   catMass: 4,
 
   // Swipes
@@ -62,6 +97,10 @@ export const tuning = {
   throwMinSpeed: 3,
   throwMaxSpeed: 10,
   throwChargeTime: 0.8,
+  // At full charge the held item is drawn back and down this far as she
+  // winds up (matches the "wind" pose of the throw animation).
+  throwWindBack: 0.05,
+  throwWindDrop: 0.02,
 
   // Trick
   trickTossSpeed: 4.2,
