@@ -13,7 +13,7 @@ MESHES = ["cat_body"]
 OUT = os.path.join(os.path.dirname(bpy.data.filepath), "..", "assets-src", "cat.glb")
 GAME_ANIMS = [
     "idle", "walk", "run", "jump", "land", "climb",
-    "swipe_L", "swipe_R", "grab", "hold", "throw", "trick",
+    "swipe_L", "swipe_R", "grab", "hold", "throw", "trick", "pounce", "descend",
 ]
 
 

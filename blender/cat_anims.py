@@ -15,12 +15,17 @@ from mathutils import Quaternion, Vector
 
 RIGIFY_RIG = "rig"
 EXPORT_RIG = "cat_rig"
+# Frame numbers below are in 24 fps frames, but clips are keyed and baked
+# SAMPLES times per frame. The game blends straight lines between baked
+# samples, and at 24 fps a fast paw swing gets so few that its arc turns
+# into a polygon.
 FPS = 24
+SAMPLES = 2
 
 # Every control that any animation touches. Each key sets all of them, so
 # one action never inherits a leftover pose from another.
 CONTROLS = [
-    "torso", "hips", "chest", "neck", "head",
+    "torso", "hips", "chest", "neck", "head", "shoulder.L", "shoulder.R",
     "foot_ik.L", "foot_ik.R", "hand_ik.L", "hand_ik.R",
     "tail.001", "tail.002", "tail.003", "tail.004",
 ]
@@ -84,16 +89,51 @@ def tail(*degs):
     return [rot(f"tail.00{i + 1}", rx(d)) for i, d in enumerate(degs)]
 
 
+# Paw swing as a cubic Bezier in (forward, up), in units of reach and lift
+# height. The paw peels up and back off the ground, lifts highest early,
+# reaches a little past its landing spot and settles back onto it, so the
+# path is a teardrop-shaped arc and the paw is still moving backwards (with
+# the ground) when it lands and when it lifts.
+SWING = [(-1.0, 0.0), (-1.3, 1.6), (1.25, 1.0), (1.0, 0.0)]
+
+
+def bezier(pts, t):
+    u = 1 - t
+    w = (u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t)
+    return tuple(sum(wi * p[k] for wi, p in zip(w, pts)) for k in range(2))
+
+
+SWING_PEAK = max(bezier(SWING, i / 200)[1] for i in range(201))
+
+
 def gait_foot(p, duty, reach, height):
     """Paw path over one cycle: planted and sliding back for `duty` of the
-    cycle, then lifted and swung forward. Returns (dy, dz)."""
+    cycle, then swung forward along SWING. Returns (dy, dz, lift), where
+    lift goes 0 -> 1 -> 0 over the swing (for curling the paw)."""
     p %= 1.0
     if p < duty:
         s = p / duty
-        return reach - 2 * reach * s, 0.0
+        return reach - 2 * reach * s, 0.0, 0.0
     s = (p - duty) / (1 - duty)
-    ss = s * s * (3 - 2 * s)
-    return -reach + 2 * reach * ss, height * math.sin(math.pi * s)
+    y, z = bezier(SWING, s)
+    return reach * y, height * z / SWING_PEAK, math.sin(math.pi * s)
+
+
+def spine_flex(spread, curl_per_m, stretch_per_m):
+    """Degrees to bend the back from the stride: paws gathered under her
+    (front paws behind their rest spot, hind paws ahead, so `spread` < 0)
+    curl the back up; a long stride (`spread` > 0) stretches it flat.
+    Positive means curled."""
+    return -spread * (curl_per_m if spread < 0 else stretch_per_m)
+
+
+def back(curl, hips=None, chest=None):
+    """Bend the back by `curl` degrees on both halves (hips and chest
+    pivot at mid-back), on top of extra hips/chest rotations."""
+    return [
+        rot("hips", (hips or Quaternion()) @ rx(curl)),
+        rot("chest", (chest or Quaternion()) @ rx(-curl)),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -145,41 +185,130 @@ def idle(p):
     return pz
 
 
-def walk(p):
-    duty, reach = 0.45, 0.15
-    phases = {"foot_ik.L": 0.0, "hand_ik.L": 0.25, "foot_ik.R": 0.5, "hand_ik.R": 0.75}
-    heights = {"foot_ik.L": 0.04, "foot_ik.R": 0.04, "hand_ik.L": 0.035, "hand_ik.R": 0.035}
-    items = []
+def stride(p, duty, reach, phases, heights, curl, inward=None, shift=None):
+    """Paw poses for one gait, front paws curling as they swing. Returns
+    the poses, the stride's spread (how far the front paws are ahead of the
+    hind paws compared to standing, meters) and each paw's (dy, lift).
+    `inward` moves a paw toward the midline (meters; it swings out a little
+    around the planted leg), `shift` moves its whole stride forward."""
+    items, front, hind, paws = [], [], [], {}
+    inward, shift = inward or {}, shift or {}
     for n, ph in phases.items():
-        dy, dz = gait_foot(p - ph, duty, reach, heights[n])
-        items.append(paw(n, offset=(0, dy, dz)))
-    s1 = math.sin(2 * math.pi * p)
+        dy, dz, lift = gait_foot(p - ph, duty, reach, heights[n])
+        dy += shift.get(n, 0.0)
+        side = -1 if n.endswith(".L") else 1  # the cat's left is -X
+        dx = -side * inward.get(n, 0.0) * (1 - 0.5 * lift)
+        is_front = n.startswith("hand")
+        items.append(paw(n, offset=(dx, dy, dz), rot=rx(-curl * lift) if is_front else None))
+        (front if is_front else hind).append(dy)
+        paws[n] = (dy, lift)
+    return items, sum(front) / len(front) - sum(hind) / len(hind), paws
+
+
+def stance(p, phase, duty):
+    """0 -> 1 -> 0 over a paw's time on the ground, else 0."""
+    s = ((p - phase) % 1.0) / duty
+    return math.sin(math.pi * s) if s < 1 else 0.0
+
+
+# The walk, from cat gait studies and reference:
+# - A lateral-sequence walk: hind L, front L, hind R, front R, a quarter
+#   cycle apart. Each paw is down 62% of the time (walks are above 50%;
+#   below that it's a run), so two or three paws always hold her up.
+# - Animated for 0.81 m/s (the game's walkSpeed is close to it). Cats walk
+#   at about 0.4-1 m/s and trot beyond that.
+# - Direct register: each hind paw lands close to where the front paw on
+#   that side just lifted, so the reach is short and the hind stride sits a
+#   little back. The paws land close to a single line under her.
+# - The shoulder blades roll with the front legs and rise as each one takes
+#   the weight. Hips and shoulders roll toward the lifted leg. The head stays
+#   level and pointed ahead while the body sways under it.
+WALK_DUTY = 0.62
+WALK_REACH = 0.115
+
+
+def walk(p):
+    phases = {"foot_ik.L": 0.0, "hand_ik.L": 0.25, "foot_ik.R": 0.5, "hand_ik.R": 0.75}
+    heights = {"foot_ik.L": 0.03, "foot_ik.R": 0.03, "hand_ik.L": 0.035, "hand_ik.R": 0.035}
+    inward = {"foot_ik.L": 0.018, "foot_ik.R": 0.018, "hand_ik.L": 0.012, "hand_ik.R": 0.012}
+    shift = {"foot_ik.L": -0.03, "foot_ik.R": -0.03}
+    items, spread, paws = stride(p, WALK_DUTY, WALK_REACH, phases, heights, curl=35, inward=inward, shift=shift)
+
+    # Bend sideways toward the side whose paws are closer together.
+    side_l = paws["hand_ik.L"][0] - paws["foot_ik.L"][0]
+    side_r = paws["hand_ik.R"][0] - paws["foot_ik.R"][0]
+    bend = 22 * (side_l - side_r)
+    # Roll toward the leg in the air (positive ry lifts her left side).
+    hip_roll = -3 * (paws["foot_ik.L"][1] - paws["foot_ik.R"][1])
+    chest_roll = -2 * (paws["hand_ik.L"][1] - paws["hand_ik.R"][1])
+    # Weight over the planted hind leg.
+    sway = 0.004 * (paws["foot_ik.R"][1] - paws["foot_ik.L"][1])
+
+    # One bounce per step of the hind legs: lowest just after a hind paw
+    # lands and takes the weight, highest as the body vaults over it.
+    bob = -0.008 - 0.004 * math.cos(4 * math.pi * (p - 0.03))
+    # The shoulders do the same over the front paws, a quarter cycle later.
+    pitch = 1.0 * math.cos(4 * math.pi * (p - 0.475))
+
+    # Shoulder blades: swing forward with the paw, back as it pushes (the
+    # rotation is about the top of the blade, so +rx moves the leg's root
+    # forward), and ride up while that leg carries her.
+    blades = []
+    for side, ph in (("L", 0.25), ("R", 0.75)):
+        dy = paws[f"hand_ik.{side}"][0]
+        lift_up = 0.006 * stance(p, ph, WALK_DUTY)
+        blades.append((f"shoulder.{side}", (Vector((0, 0, lift_up)), rx(9 * dy / WALK_REACH))))
+
     items += [
-        body(ry(2 * s1), offset=(0.004 * s1, 0, -0.01 + 0.005 * math.cos(4 * math.pi * p))),
-        rot("hips", rz(5 * s1)),
-        rot("chest", rz(-5 * s1)),
+        body(rx(pitch), offset=(sway, 0, bob)),
+        *back(spine_flex(spread, 25, 20), hips=rz(bend) @ ry(hip_roll), chest=rz(-bend) @ ry(chest_roll)),
+        *blades,
+        # The head control keeps its own heading as the chest sways (Rigify's
+        # head follow is off); just undo the pitch so her gaze stays level.
+        rot("head", rx(-pitch)),
         *tail(-30, 10, 15, 10),
     ]
     return pose(*items)
 
 
 def run(p):
-    duty, reach = 0.35, 0.15
+    # A bound: hind paws land at 0 and 0.08, front paws at 0.5 and 0.58.
+    # The paws are gathered under her around 0 and spread out around 0.5.
     phases = {"foot_ik.R": 0.0, "foot_ik.L": 0.08, "hand_ik.R": 0.5, "hand_ik.L": 0.58}
-    items = []
-    for n, ph in phases.items():
-        dy, dz = gait_foot(p - ph, duty, reach, 0.07)
-        items.append(paw(n, offset=(0, dy, dz)))
-    s = math.sin(2 * math.pi * p)
+    heights = dict.fromkeys(phases, 0.07)
+    items, spread, _ = stride(p, 0.35, 0.15, phases, heights, curl=45)
+    # Rear low while the hind legs push, front low while the front legs
+    # land. Highest in the two moments with no paw down (around 0.46 and
+    # 0.96), and more so in the gathered one.
+    pitch = -2 + 5 * math.sin(2 * math.pi * (p + 0.05))
+    bob = -0.005 + 0.012 * math.cos(4 * math.pi * (p - 0.46)) + 0.006 * math.cos(2 * math.pi * (p - 0.96))
     items += [
-        body(rx(-3 + 6 * s), offset=(0, 0, -0.005 + 0.02 * math.sin(2 * math.pi * (p - 0.1)))),
-        rot("chest", rx(-10 * s)),
-        rot("hips", rx(10 * s)),
+        body(rx(pitch), offset=(0, 0, bob)),
+        *back(spine_flex(spread, 50, 36)),
         # Keep the head steady while the body rocks.
-        rot("head", rx(-6 * s)),
+        rot("head", rx(-pitch)),
         *tail(5, 0, 5, 5),
     ]
     return pose(*items)
+
+
+def pounce(p):
+    """Getting ready to leap onto something: low and gathered, hind paws
+    drawn in under her with the weight on them, chest a little up, back
+    curled, and the rear swaying side to side (the wiggle) while the front
+    stays still. The tail lies low with the tip flicking. The game aims the
+    head at the target and holds this until the leap, which starts from the
+    jump clip's crouch."""
+    s = math.sin(2 * math.pi * p)
+    return pose(
+        body(rx(6), offset=(0, -0.015, -0.06)),
+        *back(8, hips=rz(6 * s) @ ry(-3 * s)),
+        paw("foot_ik.L", offset=(0, 0.05, 0)),
+        paw("foot_ik.R", offset=(0, 0.05, 0)),
+        paw("hand_ik.L", offset=(0, -0.01, 0)),
+        paw("hand_ik.R", offset=(0, -0.01, 0)),
+        *tail(10, 5, 0, -10 + 15 * math.sin(4 * math.pi * p)),
+    )
 
 
 def hold(p):
@@ -205,6 +334,52 @@ def jump_keys():
         *tail(-10, 5, 5, 5),
     )
     return [(0, standing()), (3, crouch), (6, launch), (10, air)]
+
+
+def descend_keys():
+    """Getting down from a table or shelf. She stands at the brink, lowers
+    her front and reaches one front paw, then both, over and down the edge,
+    tail up for balance (frames 0-8, which matches the game's
+    tuning.descendWindup of 0.35 s), pushes off with the hind legs (10) and
+    drops front paws first with the hind legs trailing (13, held until she
+    lands). The game aims the head at the landing spot."""
+    reach = pose(
+        body(rx(-12), offset=(0, 0.02, -0.03)),
+        paw("hand_ik.L", offset=(0, 0.07, -0.06)),
+        paw("hand_ik.R", offset=(0, 0.04, -0.02)),
+        paw("foot_ik.L", offset=(0, 0.02, 0)),
+        paw("foot_ik.R", offset=(0, 0.02, 0)),
+        rot("head", rx(-20)),
+        *tail(-35, 10, 10, 10),
+    )
+    deeper = pose(
+        body(rx(-15), offset=(0, 0.025, -0.04)),
+        paw("hand_ik.L", offset=(0, 0.08, -0.08)),
+        paw("hand_ik.R", offset=(0, 0.07, -0.06)),
+        paw("foot_ik.L", offset=(0, 0.03, 0)),
+        paw("foot_ik.R", offset=(0, 0.03, 0)),
+        rot("head", rx(-25)),
+        *tail(-40, 10, 10, 10),
+    )
+    push = pose(
+        body(rx(-15), offset=(0, 0.03, -0.01)),
+        paw("hand_ik.L", offset=(0, 0.08, -0.06)),
+        paw("hand_ik.R", offset=(0, 0.07, -0.05)),
+        paw("foot_ik.L", offset=(0, -0.03, 0)),
+        paw("foot_ik.R", offset=(0, -0.03, 0)),
+        rot("head", rx(-20)),
+        *tail(-40, 10, 5, 5),
+    )
+    air = pose(
+        body(rx(-20), offset=(0, 0.02, 0)),
+        paw("hand_ik.L", offset=(0, 0.08, -0.07)),
+        paw("hand_ik.R", offset=(0, 0.08, -0.07)),
+        paw("foot_ik.L", offset=(0, -0.05, 0.05)),
+        paw("foot_ik.R", offset=(0, -0.05, 0.05)),
+        rot("head", rx(-20)),
+        *tail(-40, 10, 5, 5),
+    )
+    return [(0, standing()), (5, reach), (8, deeper), (10, push), (13, air)]
 
 
 def land_keys():
@@ -289,11 +464,13 @@ def trick_keys():
 # function; one-shots are key poses with Bezier easing.
 ANIMATIONS = {
     "idle": (True, 48, idle),
-    "walk": (True, 10, walk),
+    "walk": (True, 11, walk),
     "run": (True, 8, run),
     "hold": (True, 24, hold),
+    "pounce": (True, 10, pounce),
     "jump": (False, 10, jump_keys),
     "land": (False, 3, land_keys),
+    "descend": (False, 13, descend_keys),
     "climb": (False, 12, climb_keys),
     "swipe_L": (False, 7, lambda: swipe_keys("L")),
     "swipe_R": (False, 7, lambda: swipe_keys("R")),
@@ -336,16 +513,18 @@ def author(name):
     act = replace_action(f"{name}__ctrl")
     rig.animation_data.action = act
     if loop:
-        for f in range(frames + 1):
-            apply_pose(rig, src(f / frames), f)
+        n = frames * SAMPLES
+        for f in range(n + 1):
+            apply_pose(rig, src(f / n), f)
     else:
         for f, p in src():
-            apply_pose(rig, p, f)
+            apply_pose(rig, p, f * SAMPLES)
     return act
 
 
 def bake(name):
     _, frames, _ = ANIMATIONS[name]
+    frames *= SAMPLES
     sc = bpy.context.scene
     rig = bpy.data.objects[RIGIFY_RIG]
     ex = bpy.data.objects[EXPORT_RIG]
@@ -385,7 +564,7 @@ def bake(name):
 
 def build_all(names=None):
     sc = bpy.context.scene
-    sc.render.fps = FPS
+    sc.render.fps = FPS * SAMPLES
     names = names or list(ANIMATIONS)
     for n in names:
         author(n)
@@ -393,7 +572,7 @@ def build_all(names=None):
     # Leave both rigs on idle.
     bpy.data.objects[RIGIFY_RIG].animation_data.action = bpy.data.actions["idle__ctrl"]
     bpy.data.objects[EXPORT_RIG].animation_data.action = bpy.data.actions["idle"]
-    sc.frame_start, sc.frame_end = 0, ANIMATIONS["idle"][1]
+    sc.frame_start, sc.frame_end = 0, ANIMATIONS["idle"][1] * SAMPLES
     return names
 
 

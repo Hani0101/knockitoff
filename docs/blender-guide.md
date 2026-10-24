@@ -76,10 +76,12 @@ General rules:
 | Name      | Loop | Notes |
 | --------- | ---- | ----- |
 | `idle`    | yes  | Standing, breathing |
-| `walk`    | yes  | Matches about 1.6 m/s |
-| `run`     | yes  | Matches about 3.4 m/s |
-| `jump`    | no   | Takeoff into an airborne pose; hold the last frame |
+| `walk`    | yes  | Animated for about 0.8 m/s (`catModel.walkClipSpeed`); the game speeds it up to match |
+| `run`     | yes  | Animated for about 2.6 m/s (`catModel.runClipSpeed`); the game speeds it up to match |
+| `pounce`  | yes  | Crouched, eyes on a ledge, rear wiggling; held until she leaps onto it |
+| `jump`    | no   | Takeoff into an airborne pose; hold the last frame. Frame 3 (at 24 fps) is the crouch a leap starts from |
 | `land`    | no   | Short, about 0.12 s |
+| `descend` | no   | Getting down: reach over the edge (frames 0–8 at 24 fps, matching `tuning.descendWindup`), push off, then drop front paws first; hold the last frame |
 | `climb`   | no   | Ledge scramble, 0.5 s: front paws on the ledge, then pull up |
 | `swipe_L` | no   | Left paw swipe, about 0.3 s; the paw lands at about 0.08 s |
 | `swipe_R` | no   | Right paw swipe, same timing |
